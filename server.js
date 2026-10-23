@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Servidor HTTP: solo entrega la página del chat
 const server = http.createServer((req, res) => {
