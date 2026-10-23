@@ -29,6 +29,9 @@ function broadcast(obj) {
 }
 
 wss.on('connection', (socket) => {
+  socket.vivo = true;
+  socket.on('pong', () => { socket.vivo = true; });
+
   console.log('Cliente conectado. Total:', wss.clients.size);
   broadcast({ type: 'usuarios', total: wss.clients.size });
 
@@ -49,6 +52,17 @@ wss.on('connection', (socket) => {
     broadcast({ type: 'usuarios', total: wss.clients.size });
   });
 });
+
+// Heartbeat: detecta clientes desconectados que no cerraron limpiamente
+const intervaloPing = setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (!client.vivo) return client.terminate();
+    client.vivo = false;
+    client.ping();
+  });
+}, 30000);
+
+wss.on('close', () => clearInterval(intervaloPing));
 
 server.listen(PORT, () => {
   console.log(`Chat funcionando en http://localhost:${PORT}`);
