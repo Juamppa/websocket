@@ -4,13 +4,13 @@
 **Mostrar:** `package.json` y terminal
 
 ```json
-"dependencies": {
-  "ws": "^8.18.0"
+"dependencies": {        // Sección donde se declaran las dependencias del proyecto
+  "ws": "^8.18.0"        // Librería "ws" versión ^8.18.0, necesaria para crear servidor WebSocket en Node.js
 }
 ```
 
 ```bash
-npm install
+npm install             // Descarga todas las dependencias de package.json a node_modules/
 ```
 
 **Decir:**
@@ -22,11 +22,20 @@ npm install
 **Mostrar:** `server.js:1-4` y `server.js:20-21`
 
 ```js
-const http = require('http');
-const { WebSocketServer, WebSocket } = require('ws');
+const http = require('http');                        // Módulo nativo para crear servidor HTTP
+const fs = require('fs');                            // Módulo nativo para leer archivos del disco
+const path = require('path');                        // Módulo nativo para manejar rutas de archivos
+const { WebSocketServer, WebSocket } = require('ws'); // Extrae WebSocketServer y WebSocket de la librería ws
 
-const server = http.createServer((req, res) => { ... });
-const wss = new WebSocketServer({ server });
+const server = http.createServer((req, res) => {    // Crea servidor HTTP que servirá index.html
+  fs.readFile(path.join(__dirname, 'index.html'), (err, data) => { // Lee el archivo index.html
+    if (err) { res.writeHead(500); return res.end('No se pudo cargar index.html'); } // Error si no lo encuentra
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); // Respuesta exitosa con HTML
+    res.end(data); // Envía el archivo al cliente
+  });
+});
+
+const wss = new WebSocketServer({ server });        // Monta el servidor WebSocket sobre el servidor HTTP (HTTP Upgrade)
 ```
 
 **Decir:**
@@ -38,10 +47,12 @@ const wss = new WebSocketServer({ server });
 **Mostrar:** `server.js:31-37`
 
 ```js
-wss.on('connection', (socket) => {
-  console.log('Cliente conectado. Total:', wss.clients.size);
-  broadcast({ type: 'usuarios', total: wss.clients.size });
-  ...
+wss.on('connection', (socket) => {                              // Se ejecuta cuando un cliente completa el HTTP Upgrade
+  socket.vivo = true;                                           // Marca el socket como vivo para el heartbeat
+  socket.on('pong', () => { socket.vivo = true; });             // Al recibir pong, vuelve a marcarlo como vivo
+
+  console.log('Cliente conectado. Total:', wss.clients.size);   // Muestra cantidad de clientes conectados
+  broadcast({ type: 'usuarios', total: wss.clients.size });     // Notifica a TODOS los clientes el nuevo total
 });
 ```
 
@@ -54,10 +65,10 @@ wss.on('connection', (socket) => {
 **Mostrar:** `server.js:23-29`
 
 ```js
-function broadcast(obj) {
-  const data = JSON.stringify(obj);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) client.send(data);
+function broadcast(obj) {                                    // Función para enviar un objeto a todos los clientes
+  const data = JSON.stringify(obj);                         // Convierte objeto JS a string JSON (WebSocket solo envía texto/binario)
+  wss.clients.forEach((client) => {                         // Recorre TODOS los sockets conectados
+    if (client.readyState === WebSocket.OPEN) client.send(data); // Envía solo si la conexión sigue abierta
   });
 }
 ```
@@ -71,15 +82,15 @@ function broadcast(obj) {
 **Mostrar:** `server.js:38-48`
 
 ```js
-socket.on('message', (raw) => {
+socket.on('message', (raw) => {                             // Escucha mensajes que envía ESTE cliente
   try {
-    const msg = JSON.parse(raw);
-    const nombre = String(msg.nombre || 'Anónimo').slice(0, 20);
-    const texto = String(msg.texto || '').slice(0, 500);
-    if (!texto.trim()) return;
-    broadcast({ type: 'mensaje', nombre, texto, hora: new Date().toISOString() });
+    const msg = JSON.parse(raw);                            // Convierte el string JSON recibido a objeto JS
+    const nombre = String(msg.nombre || 'Anónimo').slice(0, 20); // Sanea nombre (máx 20 caracteres)
+    const texto = String(msg.texto || '').slice(0, 500);        // Sanea texto (máx 500 caracteres)
+    if (!texto.trim()) return;                              // Ignora mensajes vacíos o con solo espacios
+    broadcast({ type: 'mensaje', nombre, texto, hora: new Date().toISOString() }); // Retransmite a todos
   } catch (e) {
-    console.error('Mensaje inválido:', e.message);
+    console.error('Mensaje inválido:', e.message);          // Si no es JSON válido, lo ignora y logea error
   }
 });
 ```
@@ -93,19 +104,19 @@ socket.on('message', (raw) => {
 **Mostrar:** `index.html:134`, `index.html:146-154` y `index.html:169-176`
 
 ```js
-const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host); // Conexión WebSocket nativa (ws/wss según protocolo)
 
-ws.onmessage = (evento) => {
-  const msg = JSON.parse(evento.data);
-  if (msg.type === 'mensaje') agregarMensaje(msg);
+ws.onmessage = (evento) => {                                // Escucha mensajes que envía el servidor
+  const msg = JSON.parse(evento.data);                     // Convierte JSON recibido a objeto
+  if (msg.type === 'mensaje') agregarMensaje(msg);         // Muestra solo mensajes de tipo 'mensaje'
 };
 
-form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const texto = inputTexto.value.trim();
-  if (!texto || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ nombre: inputNombre.value.trim() || 'Anónimo', texto }));
-  inputTexto.value = '';
+form.addEventListener('submit', (e) => {                   // Al enviar el formulario
+  e.preventDefault();                                      // Evita recarga de página
+  const texto = inputTexto.value.trim();                   // Toma texto sin espacios
+  if (!texto || ws.readyState !== WebSocket.OPEN) return; // No envía si vacío o no conectado
+  ws.send(JSON.stringify({ nombre: inputNombre.value.trim() || 'Anónimo', texto })); // Envía JSON al servidor
+  inputTexto.value = '';                                   // Limpia el input
 });
 ```
 
