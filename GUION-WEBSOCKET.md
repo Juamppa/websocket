@@ -25,7 +25,7 @@ npm install             // Descarga todas las dependencias de package.json a nod
 const http = require('http');                        // Módulo nativo para crear servidor HTTP
 const fs = require('fs');                            // Módulo nativo para leer archivos del disco
 const path = require('path');                        // Módulo nativo para manejar rutas de archivos
-const { WebSocketServer, WebSocket } = require('ws'); // Extrae WebSocketServer y WebSocket de la librería ws
+const { WebSocketServer, WebSocket } = require('ws'); // Extrae de 'ws': WebSocketServer (crea el servidor) y WebSocket (una conexión; se usa para la constante OPEN)
 
 const server = http.createServer((req, res) => {    // Crea servidor HTTP que servirá index.html
   fs.readFile(path.join(__dirname, 'index.html'), (err, data) => { // Lee el archivo index.html
@@ -39,7 +39,7 @@ const wss = new WebSocketServer({ server });        // Monta el servidor WebSock
 ```
 
 **Decir:**
-> "Creamos un servidor HTTP con Node.js y, en lugar de levantar un servidor WebSocket independiente, pasamos ese mismo servidor a `WebSocketServer`. Esto permite que ambas conexiones compartan el mismo puerto. Cuando un cliente intenta establecer una conexión WebSocket, ocurre el *HTTP Upgrade*: la petición HTTP se transforma en una conexión WebSocket persistente y bidireccional."
+> "De `ws` importamos `WebSocketServer`, que crea el servidor, y `WebSocket`, que usamos solo para la constante `OPEN`. En vez de levantar un servidor WebSocket aparte, le pasamos nuestro servidor HTTP, así comparten el mismo puerto. Cuando un cliente se conecta ocurre el *HTTP Upgrade*: la petición HTTP se transforma en una conexión WebSocket persistente y bidireccional."
 
 ---
 
@@ -58,6 +58,29 @@ wss.on('connection', (socket) => {                              // Se ejecuta cu
 
 **Decir:**
 > "Una vez hecho el *upgrade*, el servidor emite el evento `connection`. Recibimos un objeto `socket` que representa esa conexión individual. Ese `socket` es el canal directo entre servidor y ese cliente, y es con el que podremos enviarle o recibirle mensajes."
+
+---
+
+## 2.5 Heartbeat: detectar clientes caídos (15 - 20 seg)
+**Mostrar:** `server.js:32-33` y `server.js:56-65`
+
+```js
+socket.vivo = true;                                  // Al conectar, marcamos el socket como vivo
+socket.on('pong', () => { socket.vivo = true; });    // Si responde al ping, sigue vivo
+
+const intervaloPing = setInterval(() => {            // Cada 30 segundos...
+  wss.clients.forEach((client) => {                  // Recorre todos los clientes
+    if (!client.vivo) return client.terminate();     // Si no respondió al ping anterior, lo desconecta
+    client.vivo = false;                             // Lo marca como "sin responder"
+    client.ping();                                   // Le envía un ping
+  });
+}, 30000);                                           // Cada 30.000 ms = 30 segundos
+
+wss.on('close', () => clearInterval(intervaloPing)); // Al cerrar el servidor, corta el intervalo
+```
+
+**Decir:**
+> "Un problema real de WebSocket es detectar clientes que se desconectaron sin avisar, por ejemplo por mala conexión: el servidor los sigue contando como conectados. Para eso está el *heartbeat*: cada 30 segundos el servidor envía un `ping` a cada cliente. Si el cliente está vivo, el protocolo responde automáticamente con un `pong` y lo volvemos a marcar como vivo. Si no responde, lo cerramos con `terminate()`. Así el contador de usuarios se mantiene correcto. Ojo: esto es una técnica de la aplicación, no parte del protocolo WebSocket."
 
 ---
 
@@ -103,25 +126,32 @@ socket.on('message', (raw) => {                             // Escucha mensajes 
 ## 5. Cliente: conexión, envío y recepción (40 - 55 seg)
 **Mostrar:** `index.html:134`, `index.html:146-154` y `index.html:169-176`
 
+> **Truco para la demo:** podés mostrar que en local la URL es `ws://localhost:3000` y, al desplegar en Render, la misma línea genera `wss://...` porque la página pasa a ser `https://`. No hay que configurar nada aparte.
+
 ```js
-const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host); // Conexión WebSocket nativa (ws/wss según protocolo)
+const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host); // Abre la conexión al mismo host; usa wss:// si la página es https (Render) y ws:// si es http (local)
 
 ws.onmessage = (evento) => {                                // Escucha mensajes que envía el servidor
   const msg = JSON.parse(evento.data);                     // Convierte JSON recibido a objeto
-  if (msg.type === 'mensaje') agregarMensaje(msg);         // Muestra solo mensajes de tipo 'mensaje'
+  if (msg.type === 'usuarios') {                           // Si el servidor avisa cuántos hay conectados
+    total = msg.total;                                     // Guarda el total de personas conectadas
+    estado.textContent = total + (total === 1 ? ' persona conectada' : ' personas conectadas'); // Muestra "1 persona" o "N personas"
+  } else if (msg.type === 'mensaje') {                     // Si es un mensaje de chat
+    agregarMensaje(msg);                                   // Dibuja la burbuja en pantalla
+  }
 };
 
 form.addEventListener('submit', (e) => {                   // Al enviar el formulario
   e.preventDefault();                                      // Evita recarga de página
   const texto = inputTexto.value.trim();                   // Toma texto sin espacios
   if (!texto || ws.readyState !== WebSocket.OPEN) return; // No envía si vacío o no conectado
-  ws.send(JSON.stringify({ nombre: inputNombre.value.trim() || 'Anónimo', texto })); // Envía JSON al servidor
+  ws.send(JSON.stringify({ nombre: inputNombre.value.trim() || 'Anónimo', texto })); // Arma objeto, lo pasa a JSON y lo envía al servidor por la conexión
   inputTexto.value = '';                                   // Limpia el input
 });
 ```
 
 **Decir:**
-> "El navegador cuenta con la clase `WebSocket` nativa. Creamos la conexión usando `ws://` o `wss://` según el protocolo. Con `ws.send()` enviamos el mensaje al servidor, y con `ws.onmessage` escuchamos lo que el servidor nos envía de vuelta. Un detalle clave: el cliente no muestra su propio mensaje al enviarlo, espera recibirlo desde el `broadcast()` del servidor. Eso demuestra que todo el tráfico pasa por el servidor a través de la conexión WebSocket."
+> "El navegador cuenta con la clase `WebSocket` nativa. Con `new WebSocket(...)` abrimos la conexión hacia el **mismo host** que sirvió la página (`location.host`). Fijate en el detalle del protocolo: si la página es `http://` usa `ws://`, y si es `https://` usa `wss://` automáticamente. Por eso la misma línea funciona en local y en producción (Render), sin cambiar nada. Con `ws.send()` enviamos el mensaje al servidor, y con `ws.onmessage` escuchamos lo que el servidor nos envía de vuelta. Ese `onmessage` recibe texto JSON, lo pasa a objeto con `JSON.parse` y, según `msg.type`, hace una de dos cosas: si es `usuarios` actualiza el contador de personas conectadas; si es `mensaje` dibuja la burbuja con `agregarMensaje()`. Para enviar es al revés: armamos un objeto con el nombre y el texto, lo convertimos a JSON con `JSON.stringify` y lo mandamos con `ws.send()`. WebSocket no transporta objetos, solo texto, por eso esa conversión; el servidor después lo vuelve a objeto con `JSON.parse`. Un detalle clave: el cliente no muestra su propio mensaje al enviarlo, espera recibirlo desde el `broadcast()` del servidor. Eso demuestra que todo el tráfico pasa por el servidor a través de la conexión WebSocket."
 
 ---
 
